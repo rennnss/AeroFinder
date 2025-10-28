@@ -1,5 +1,7 @@
 # macOS Finder Transparency Tweak
 
+<img width="1393" height="718" alt="image" src="https://github.com/user-attachments/assets/0c5b9233-b52a-4571-b826-a3f5c4602823" />
+
 This tweak modifies the Finder window appearance on macOS:
 
 ## Features
