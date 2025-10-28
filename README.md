@@ -27,7 +27,7 @@ blurctl status     # Show current status
 
 - The tweak does not apply to other apps or system dialogs.
 - No blur or vibrancy is used—only transparency.
-- Requires SIP and Library Validation to be disabled for injection.
+- Requires SIP and Library Validation to be disabled and ammonia for injection.
 
 ## Install
 
