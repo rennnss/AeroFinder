@@ -1,8 +1,8 @@
 # macOS Blur Tweak Makefile
 # Advanced window blending using NSVisualEffectView
 
-# Determine repository root (current directory)
-REPO_ROOT := /Users/ren/macos-blur-tweak
+# Determine repository root (parent of macos-blur-tweak)
+REPO_ROOT := $(shell pwd)
 
 # Compiler detection
 XCODE_PATH := $(shell xcode-select -p)
@@ -19,7 +19,7 @@ CFLAGS = -Wall -Wextra -O2 \
     -isysroot $(SDKROOT) \
     -iframework $(SDKROOT)/System/Library/Frameworks \
     -F/System/Library/PrivateFrameworks \
-    -IZKSwizzle
+    -I$(REPO_ROOT)/ZKSwizzle
 
 ARCHS = -arch x86_64 -arch arm64 -arch arm64e
 FRAMEWORK_PATH = $(SDKROOT)/System/Library/Frameworks
@@ -37,11 +37,8 @@ INSTALL_DIR = /var/ammonia/core/tweaks
 CLI_INSTALL_DIR = /usr/local/bin
 
 # Source files
-DYLIB_SOURCES = $(SOURCE_DIR)/blurtweak.m $(SOURCE_DIR)/glass_effect.mm ZKSwizzle/ZKSwizzle.m
-DYLIB_OBJECTS = $(BUILD_DIR)/src/blurtweak.o $(BUILD_DIR)/src/glass_effect.o $(BUILD_DIR)/ZKSwizzle/ZKSwizzle.o
-# Compile glass_effect.mm
-$(BUILD_DIR)/src/glass_effect.o: $(SOURCE_DIR)/glass_effect.mm | $(BUILD_DIR)
-	$(CC) $(CFLAGS) $(ARCHS) -c $< -o $@
+DYLIB_SOURCES = $(SOURCE_DIR)/blurtweak.m $(REPO_ROOT)/ZKSwizzle/ZKSwizzle.m
+DYLIB_OBJECTS = $(BUILD_DIR)/src/blurtweak.o $(BUILD_DIR)/ZKSwizzle/ZKSwizzle.o
 
 # CLI tool
 CLI_SOURCE = $(SOURCE_DIR)/blurctl.m
@@ -73,8 +70,8 @@ $(BUILD_DIR):
 $(BUILD_DIR)/src/blurtweak.o: $(SOURCE_DIR)/blurtweak.m | $(BUILD_DIR)
 	$(CC) $(CFLAGS) $(ARCHS) -c $< -o $@
 
-# Compile ZKSwizzle.m from current directory
-$(BUILD_DIR)/ZKSwizzle/ZKSwizzle.o: ZKSwizzle/ZKSwizzle.m | $(BUILD_DIR)
+# Compile ZKSwizzle.m from parent directory
+$(BUILD_DIR)/ZKSwizzle/ZKSwizzle.o: $(REPO_ROOT)/ZKSwizzle/ZKSwizzle.m | $(BUILD_DIR)
 	$(CC) $(CFLAGS) $(ARCHS) -c $< -o $@
 
 # Link dylib

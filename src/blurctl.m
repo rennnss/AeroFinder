@@ -9,17 +9,12 @@ void printUsage() {
          "\n  toggle                Toggle blur tweak"
          "\n  status                Show current settings"
          "\n\nOptions:"
-         "\n  --titlebar            Toggle transparent titlebar"
-         "\n  --vibrancy            Toggle vibrancy effects"
-         "\n  --emphasize           Toggle emphasis for focused windows"
          "\n  --intensity <0-100>   Set blur intensity (0-100)"
          "\n  --help, -h            Show this help message"
          "\n\nExamples:"
          "\n  blurctl on            Enable all blur effects"
          "\n  blurctl off           Disable all blur effects"
          "\n  blurctl toggle        Toggle blur on/off"
-         "\n  blurctl --titlebar    Toggle transparent titlebars"
-         "\n  blurctl --emphasize   Toggle emphasis for focused windows"
          "\n  blurctl --intensity 75  Set blur intensity to 75%");
 }
 
@@ -37,32 +32,40 @@ int main(int argc, const char *argv[]) {
             return 0;
         }
         
+        NSString *prefsPath = [NSHomeDirectory() stringByAppendingPathComponent:@"Library/Preferences/com.blur.tweak.plist"];
+        NSMutableDictionary *prefs = [NSMutableDictionary dictionaryWithContentsOfFile:prefsPath];
+        if (!prefs) prefs = [NSMutableDictionary dictionary];
+        
         if ([command isEqualToString:@"on"]) {
+            prefs[@"enabled"] = @YES;
+            [prefs writeToFile:prefsPath atomically:YES];
             notify_post("com.blur.tweak.enable");
             printf("Blur tweak enabled\n");
         } else if ([command isEqualToString:@"off"]) {
+            prefs[@"enabled"] = @NO;
+            [prefs writeToFile:prefsPath atomically:YES];
             notify_post("com.blur.tweak.disable");
             printf("Blur tweak disabled\n");
         } else if ([command isEqualToString:@"toggle"]) {
+            BOOL wasEnabled = [prefs[@"enabled"] boolValue];
+            BOOL nowEnabled = !wasEnabled;
+            prefs[@"enabled"] = @(nowEnabled);
+            [prefs writeToFile:prefsPath atomically:YES];
             notify_post("com.blur.tweak.toggle");
             printf("Blur tweak toggled\n");
         } else if ([command isEqualToString:@"status"]) {
+            NSDictionary *currentPrefs = [NSDictionary dictionaryWithContentsOfFile:prefsPath];
+            BOOL enabled = [currentPrefs[@"enabled"] boolValue];
+            int intensity = [currentPrefs[@"intensity"] intValue];
             printf("Blur Tweak Status:\n");
-            printf("  Use the tweak to check current settings\n");
-            printf("  (Status querying not yet implemented)\n");
-        } else if ([command isEqualToString:@"--titlebar"]) {
-            notify_post("com.blur.tweak.titlebar");
-            printf("Transparent titlebar toggled\n");
-        } else if ([command isEqualToString:@"--vibrancy"]) {
-            notify_post("com.blur.tweak.vibrancy");
-            printf("Vibrancy toggled\n");
-        } else if ([command isEqualToString:@"--emphasize"]) {
-            notify_post("com.blur.tweak.emphasize");
-            printf("Window emphasis toggled\n");
+            printf("  Enabled: %s\n", enabled ? "Yes" : "No");
+            printf("  Intensity: %d\n", intensity);
         } else if ([command isEqualToString:@"--intensity"]) {
             if (argc > 2) {
                 int intensity = atoi(argv[2]);
                 if (intensity >= 0 && intensity <= 100) {
+                    prefs[@"intensity"] = @(intensity);
+                    [prefs writeToFile:prefsPath atomically:YES];
                     int token = 0;
                     if (notify_register_check("com.blur.tweak.intensity", &token) == NOTIFY_STATUS_OK) {
                         notify_set_state(token, intensity);

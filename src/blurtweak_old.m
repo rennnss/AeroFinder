@@ -1,9 +1,11 @@
+// Needed for BOOL definition
+#import <objc/objc.h>
 @import Foundation;
 @import AppKit;
 @import QuartzCore;
 @import CoreImage;
 #import <objc/runtime.h>
-#import "./ZKSwizzle.h"
+#import "ZKSwizzle.h"
 #import <notify.h>
 
 /**
@@ -17,27 +19,26 @@
 
 // Global state
 static BOOL enableBlurTweak = YES;
+static BOOL enableTransparentTitlebar = YES;
 static CGFloat blurIntensity = 0.85; // 0.0 to 1.0
 
 // Load persistent settings
 static void loadPersistentSettings(void) {
-    NSString *prefsPath = [NSHomeDirectory() stringByAppendingPathComponent:@"Library/Preferences/com.blur.tweak.plist"];
-    NSDictionary *prefs = [NSDictionary dictionaryWithContentsOfFile:prefsPath];
-    if (prefs) {
-        if (prefs[@"enabled"]) {
-            enableBlurTweak = [prefs[@"enabled"] boolValue];
-        }
-        if (prefs[@"intensity"]) {
-            int intensity = [prefs[@"intensity"] intValue];
-            if (intensity >= 0 && intensity <= 100) {
-                blurIntensity = (CGFloat)intensity / 100.0;
-            }
+    NSUserDefaults *defaults = [[NSUserDefaults alloc] initWithSuiteName:@"com.blur.tweak.settings"];
+    if ([defaults objectForKey:@"enabled"] != nil) {
+        enableBlurTweak = [defaults boolForKey:@"enabled"];
+    }
+    if ([defaults objectForKey:@"intensity"] != nil) {
+        int intensity = (int)[defaults integerForKey:@"intensity"];
+        if (intensity >= 0 && intensity <= 100) {
+            blurIntensity = (CGFloat)intensity / 100.0;
         }
     }
 }
 
-// Cache for visual effect views
-static NSMutableDictionary<NSNumber *, NSVisualEffectView *> *windowBlurViews = nil;
+
+
+#pragma mark - Helper Functions
 
 // Check if we're running in Finder
 static inline BOOL isFinderProcess(void) {
@@ -87,79 +88,28 @@ static inline BOOL shouldApplyBlurEffects(NSWindow *window) {
     return YES;
 }
 
-// Get or create blur view for a window
-static NSVisualEffectView *getBlurViewForWindow(NSWindow *window) {
-    if (!windowBlurViews) {
-        windowBlurViews = [NSMutableDictionary dictionary];
-    }
-    
-    NSNumber *windowKey = @((NSUInteger)window);
-    NSVisualEffectView *blurView = windowBlurViews[windowKey];
-    
-    if (!blurView && window.contentView) {
-        // Create blur view with BehindWindow blending
-        blurView = [[NSVisualEffectView alloc] initWithFrame:window.contentView.bounds];
-        blurView.material = NSVisualEffectMaterialUnderWindowBackground;
-        blurView.blendingMode = NSVisualEffectBlendingModeBehindWindow;
-        blurView.state = NSVisualEffectStateActive;
-        blurView.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
-        blurView.emphasized = YES;
-        blurView.alphaValue = blurIntensity;
-        
-        // Configure layer positioning
-        blurView.wantsLayer = YES;
-        if (blurView.layer) {
-            // Position below content layers
-            blurView.layer.zPosition = -100.0;
-        }
-        
-        // Cache the blur view
-        windowBlurViews[windowKey] = blurView;
-    }
-    
-    return blurView;
-}
 
-// Apply blur effects to a window
-static void applyBlurEffectsToWindow(NSWindow *window) {
+
+
+// Apply transparency effect to a window (safe, no custom views)
+static void applyGlassEffectToWindow(NSWindow *window) {
     if (!shouldApplyBlurEffects(window)) return;
-    
-    NSVisualEffectView *blurView = getBlurViewForWindow(window);
-    if (!blurView) return;
-    
-    // Make window background transparent
     window.backgroundColor = [NSColor clearColor];
     window.opaque = NO;
     window.hasShadow = YES;
-    
-    // Set up blur view as content view container
-    if (blurView.superview != window.contentView.superview) {
-        NSView *originalContentView = window.contentView;
-        window.contentView = blurView;
-        
-        if (originalContentView && originalContentView != blurView) {
-            [blurView addSubview:originalContentView];
-            originalContentView.frame = blurView.bounds;
-            originalContentView.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
+    if (enableTransparentTitlebar) {
+        window.titlebarAppearsTransparent = YES;
+        if (window.styleMask & NSWindowStyleMaskTitled) {
+            window.styleMask |= NSWindowStyleMaskFullSizeContentView;
         }
     }
 }
 
-// Remove blur effects from a window
-static void removeBlurEffectsFromWindow(NSWindow *window) {
-    if (!windowBlurViews) return;
-    
-    NSNumber *windowKey = @((NSUInteger)window);
-    NSVisualEffectView *blurView = windowBlurViews[windowKey];
-    
-    if (blurView) {
-        [blurView removeFromSuperview];
-        [windowBlurViews removeObjectForKey:windowKey];
-    }
-    
-    // Restore original window appearance
+// Restore original window appearance
+static void removeGlassEffectFromWindow(NSWindow *window) {
     window.backgroundColor = [NSColor windowBackgroundColor];
     window.opaque = YES;
+    window.titlebarAppearsTransparent = NO;
 }
 
 // Update all existing windows
@@ -167,23 +117,16 @@ static void updateAllWindows(BOOL enable) {
     NSArray<NSWindow *> *windows = [NSApplication sharedApplication].windows;
     for (NSWindow *window in windows) {
         if (enable) {
-            applyBlurEffectsToWindow(window);
+            applyGlassEffectToWindow(window);
         } else {
-            removeBlurEffectsFromWindow(window);
+            removeGlassEffectFromWindow(window);
         }
     }
 }
 
-// Update intensity on all active blur views
+// No-op: Intensity is not used without custom glass view
 static void updateIntensityOnAllViews(void) {
-    if (!windowBlurViews) return;
-    
-    for (NSNumber *windowKey in windowBlurViews) {
-        NSVisualEffectView *blurView = windowBlurViews[windowKey];
-        if (blurView) {
-            blurView.alphaValue = blurIntensity;
-        }
-    }
+    // No operation
 }
 
 #pragma mark - Darwin Notification Handlers
@@ -233,36 +176,33 @@ ZKSwizzleInterface(BlurTweak_NSWindow, NSWindow, NSWindow)
 @implementation BlurTweak_NSWindow
 
 - (id)initWithContentRect:(NSRect)contentRect styleMask:(NSWindowStyleMask)style backing:(NSBackingStoreType)backingStoreType defer:(BOOL)flag {
-    id result = ZKOrig(id, contentRect, style, backingStoreType, flag);
-    if (result && enableBlurTweak) {
+    self = ZKOrig(id, contentRect, style, backingStoreType, flag);
+    if (self && enableBlurTweak) {
         dispatch_async(dispatch_get_main_queue(), ^{
-            applyBlurEffectsToWindow((NSWindow *)result);
+            applyGlassEffectToWindow((NSWindow *)self);
         });
     }
-    return result;
+    return self;
 }
 
 - (void)setFrame:(NSRect)frameRect display:(BOOL)flag {
     ZKOrig(void, frameRect, flag);
     
     if (enableBlurTweak && shouldApplyBlurEffects(self)) {
-        NSVisualEffectView *blurView = getBlurViewForWindow(self);
-        if (blurView && blurView.superview) {
-            blurView.frame = self.contentView.bounds;
-        }
+        applyGlassEffectToWindow(self);
     }
 }
 
 - (void)orderFront:(id)sender {
     ZKOrig(void, sender);
     if (enableBlurTweak) {
-        applyBlurEffectsToWindow(self);
+        applyGlassEffectToWindow(self);
     }
 }
 
 - (void)close {
     if (enableBlurTweak) {
-        removeBlurEffectsFromWindow(self);
+        removeGlassEffectFromWindow(self);
     }
     ZKOrig(void);
 }
@@ -275,25 +215,25 @@ __attribute__((constructor))
 static void initializeBlurTweak(void) {
     @autoreleasepool {
         NSLog(@"[BlurTweak] Initializing Finder-only blur tweak");
-        
+
         // Only proceed if running in Finder
         if (!isFinderProcess()) {
             NSLog(@"[BlurTweak] Not running in Finder, skipping initialization");
             return;
         }
-        
+
         // Load persistent settings
         loadPersistentSettings();
-        
+
         // Register notification handlers
         registerNotificationHandlers();
-        
+
         // Apply to existing windows after short delay
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), 
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)),
                       dispatch_get_main_queue(), ^{
             updateAllWindows(enableBlurTweak);
         });
-        
+
         NSLog(@"[BlurTweak] Finder blur tweak initialized");
     }
 }
