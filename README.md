@@ -38,7 +38,7 @@ make && sudo make install
 ```
 
 - Restart Finder, and use the CLI tool to toggle it on and off,
-- NOTE: currently the tweak does not work with off, so you will have to set the intensity to 100.
+- NOTE: currently the tweak does work with off, but you will have to restart finder once you turn it off.
 
 ## License
 
