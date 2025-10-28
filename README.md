@@ -31,6 +31,7 @@ blurctl status     # Show current status
 
 ## Install
 
+- Install ammonia from : https://github.com/CoreBedtime/ammonia
 ```bash
 git clone https://github.com/rennnss/AeroFinder.git
 
