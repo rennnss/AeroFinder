@@ -757,7 +757,7 @@ static void registerNotificationHandlers(void) {
 
 #pragma mark - Swizzled NSWindow
 
-ZKSwizzleInterface(BlurTweak_NSWindow, NSWindow, NSWindow)
+ZKSwizzleInterfaceGroup(BlurTweak_NSWindow, NSWindow, NSWindow, BLUR_TWEAK_GROUP)
 @implementation BlurTweak_NSWindow
 
 - (id)initWithContentRect:(NSRect)contentRect styleMask:(NSWindowStyleMask)style backing:(NSBackingStoreType)backingStoreType defer:(BOOL)flag {
@@ -887,7 +887,7 @@ ZKSwizzleInterface(BlurTweak_NSWindow, NSWindow, NSWindow)
 
 #pragma mark - Swizzled NSScrollView (force transparent backgrounds)
 
-ZKSwizzleInterface(BlurTweak_NSScrollView, NSScrollView, NSScrollView)
+ZKSwizzleInterfaceGroup(BlurTweak_NSScrollView, NSScrollView, NSScrollView, BLUR_TWEAK_GROUP)
 @implementation BlurTweak_NSScrollView
 
 - (void)setDrawsBackground:(BOOL)drawsBackground {
@@ -912,7 +912,7 @@ ZKSwizzleInterface(BlurTweak_NSScrollView, NSScrollView, NSScrollView)
 
 #pragma mark - Swizzled NSClipView (force transparent backgrounds)
 
-ZKSwizzleInterface(BlurTweak_NSClipView, NSClipView, NSClipView)
+ZKSwizzleInterfaceGroup(BlurTweak_NSClipView, NSClipView, NSClipView, BLUR_TWEAK_GROUP)
 @implementation BlurTweak_NSClipView
 
 - (void)setDrawsBackground:(BOOL)drawsBackground {
@@ -937,7 +937,7 @@ ZKSwizzleInterface(BlurTweak_NSClipView, NSClipView, NSClipView)
 
 #pragma mark - Swizzled NSView (for navigation view tracking and transparency)
 
-ZKSwizzleInterface(BlurTweak_NSView, NSView, NSView)
+ZKSwizzleInterfaceGroup(BlurTweak_NSView, NSView, NSView, BLUR_TWEAK_GROUP)
 @implementation BlurTweak_NSView
 
 - (void)viewDidMoveToWindow {
@@ -1065,7 +1065,11 @@ ZKSwizzleInterface(BlurTweak_NSView, NSView, NSView)
 __attribute__((constructor))
 static void initializeBlurTweak(void) {
     @autoreleasepool {
-        if (!isFinderProcess()) return;
+        // CRITICAL: Check if we're in Finder BEFORE activating swizzles
+        if (!isFinderProcess()) {
+            NSLog(@"[BlurTweak] Not Finder - tweak will not activate");
+            return;
+        }
         
         if (!checkLiquidGlassAvailability()) {
             NSLog(@"[BlurTweak] ERROR: NSGlassEffectView not available (requires macOS 26.0+)");
@@ -1073,6 +1077,9 @@ static void initializeBlurTweak(void) {
         }
         
         NSLog(@"[BlurTweak] Initializing Liquid Glass tweak");
+        
+        // Activate the swizzles ONLY in Finder
+        ZKSwizzleGroup(BLUR_TWEAK_GROUP);
         
         loadPersistentSettings();
         registerNotificationHandlers();
