@@ -30,23 +30,16 @@ PUBLIC_FRAMEWORKS = -framework Foundation -framework AppKit -framework QuartzCor
 # Project settings
 PROJECT = blur_tweak
 DYLIB_NAME = lib$(PROJECT).dylib
-CLI_NAME = blurctl
 BUILD_DIR = build
 SOURCE_DIR = src
 INSTALL_DIR = /var/ammonia/core/tweaks
-CLI_INSTALL_DIR = /usr/local/bin
 
 # Source files
 DYLIB_SOURCES = $(SOURCE_DIR)/blurtweak.m $(REPO_ROOT)/ZKSwizzle/ZKSwizzle.m
 DYLIB_OBJECTS = $(BUILD_DIR)/src/blurtweak.o $(BUILD_DIR)/ZKSwizzle/ZKSwizzle.o
 
-# CLI tool
-CLI_SOURCE = $(SOURCE_DIR)/blurctl.m
-CLI_OBJECT = $(BUILD_DIR)/blurctl.o
-
 # Installation paths
 INSTALL_PATH = $(INSTALL_DIR)/$(DYLIB_NAME)
-CLI_INSTALL_PATH = $(CLI_INSTALL_DIR)/$(CLI_NAME)
 BLACKLIST_SOURCE = lib$(PROJECT).dylib.blacklist
 BLACKLIST_DEST = $(INSTALL_DIR)/lib$(PROJECT).dylib.blacklist
 WHITELIST_SOURCE = lib$(PROJECT).dylib.whitelist
@@ -59,7 +52,7 @@ DYLIB_FLAGS = -dynamiclib \
               -current_version 1.0.0
 
 # Default target
-all: clean $(BUILD_DIR)/$(DYLIB_NAME) $(BUILD_DIR)/$(CLI_NAME)
+all: clean $(BUILD_DIR)/$(DYLIB_NAME)
 
 # Create build directory
 $(BUILD_DIR):
@@ -84,28 +77,18 @@ $(BUILD_DIR)/$(DYLIB_NAME): $(DYLIB_OBJECTS)
 	$(PUBLIC_FRAMEWORKS) \
 	-L$(SDKROOT)/usr/lib
 
-# Build CLI tool
-$(BUILD_DIR)/$(CLI_NAME): $(CLI_SOURCE)
-	@rm -f $(BUILD_DIR)/$(CLI_NAME)
-	$(CC) $(CFLAGS) $(ARCHS) $(CLI_SOURCE) \
-		-framework Foundation \
-		-framework CoreFoundation \
-		-o $@
-
-# Install both dylib and CLI tool
-install: $(BUILD_DIR)/$(DYLIB_NAME) $(BUILD_DIR)/$(CLI_NAME)
-	@echo "Installing blur tweak to $(INSTALL_DIR) and CLI to $(CLI_INSTALL_DIR)"
+# Install dylib
+install: $(BUILD_DIR)/$(DYLIB_NAME)
+	@echo "Installing blur tweak to $(INSTALL_DIR)"
 	sudo mkdir -p $(INSTALL_DIR)
-	sudo mkdir -p $(CLI_INSTALL_DIR)
 	sudo install -m 755 $(BUILD_DIR)/$(DYLIB_NAME) $(INSTALL_DIR)
-	sudo install -m 755 $(BUILD_DIR)/$(CLI_NAME) $(CLI_INSTALL_DIR)
 	@if [ -f $(BLACKLIST_SOURCE) ]; then \
 		sudo cp $(BLACKLIST_SOURCE) $(BLACKLIST_DEST); \
 		sudo cp $(WHITELIST_SOURCE) $(WHITELIST_DEST); \
 		sudo chmod 644 $(BLACKLIST_DEST); \
-		echo "Installed $(DYLIB_NAME), $(CLI_NAME), and blacklist"; \
+		echo "Installed $(DYLIB_NAME) and blacklist"; \
 	else \
-		echo "Installed $(DYLIB_NAME) and $(CLI_NAME)"; \
+		echo "Installed $(DYLIB_NAME)"; \
 	fi
 
 # Test target
@@ -130,9 +113,8 @@ clean:
 # Uninstall
 uninstall:
 	@sudo rm -f $(INSTALL_PATH)
-	@sudo rm -f $(CLI_INSTALL_PATH)
 	@sudo rm -f $(BLACKLIST_DEST)
-	@echo "Uninstalled $(DYLIB_NAME) and $(CLI_NAME)"
+	@echo "Uninstalled $(DYLIB_NAME)"
 
 # Delete and restart apps
 delete:
@@ -142,7 +124,6 @@ delete:
 		pkill -9 "$$app" 2>/dev/null || true; \
 	done
 	@sudo rm -f $(INSTALL_PATH)
-	@sudo rm -f $(CLI_INSTALL_PATH)
 	@sudo rm -f $(BLACKLIST_DEST)
 	@sleep 1
 	@open -a "Finder" || true
