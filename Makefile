@@ -47,8 +47,10 @@ CLI_OBJECT = $(BUILD_DIR)/blurctl.o
 # Installation paths
 INSTALL_PATH = $(INSTALL_DIR)/$(DYLIB_NAME)
 CLI_INSTALL_PATH = $(CLI_INSTALL_DIR)/$(CLI_NAME)
-BLACKLIST_SOURCE = lib$(PROJECT).dylib.whitelist
-BLACKLIST_DEST = $(INSTALL_DIR)/lib$(PROJECT).dylib.whitelist
+BLACKLIST_SOURCE = lib$(PROJECT).dylib.blacklist
+BLACKLIST_DEST = $(INSTALL_DIR)/lib$(PROJECT).dylib.blacklist
+WHITELIST_SOURCE = lib$(PROJECT).dylib.whitelist
+WHITELIST_DEST = $(INSTALL_DIR)/lib$(PROJECT).dylib.whitelist
 
 # Dylib settings
 DYLIB_FLAGS = -dynamiclib \
@@ -99,6 +101,7 @@ install: $(BUILD_DIR)/$(DYLIB_NAME) $(BUILD_DIR)/$(CLI_NAME)
 	sudo install -m 755 $(BUILD_DIR)/$(CLI_NAME) $(CLI_INSTALL_DIR)
 	@if [ -f $(BLACKLIST_SOURCE) ]; then \
 		sudo cp $(BLACKLIST_SOURCE) $(BLACKLIST_DEST); \
+		sudo cp $(WHITELIST_SOURCE) $(WHITELIST_DEST); \
 		sudo chmod 644 $(BLACKLIST_DEST); \
 		echo "Installed $(DYLIB_NAME), $(CLI_NAME), and blacklist"; \
 	else \
