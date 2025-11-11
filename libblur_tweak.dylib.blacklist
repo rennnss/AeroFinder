@@ -178,3 +178,4 @@ find
 killall
 sleep
 echo
+powerboxd

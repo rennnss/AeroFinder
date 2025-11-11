@@ -151,6 +151,7 @@ static inline BOOL shouldApplyBlurEffects(NSWindow *window) {
     if (!isFinderProcess()) return NO;
     
     NSWindowStyleMask mask = window.styleMask;
+    NSString *windowClassName = NSStringFromClass([window class]);
     
     // Exclude desktop windows (level < 0)
     if (window.level < 0) return NO;
@@ -158,7 +159,21 @@ static inline BOOL shouldApplyBlurEffects(NSWindow *window) {
     // Exclude high-level windows (menus, popovers, tooltips are at level > 0)
     if (window.level > NSNormalWindowLevel) return NO;
     
+    // CRITICAL: Exclude specific window classes by name
+    // These are popup menus, auxiliary windows, and other system UI
+    if ([windowClassName isEqualToString:@"NSPopupMenuWindow"] ||
+        [windowClassName isEqualToString:@"TUINSWindow"] ||
+        [windowClassName isEqualToString:@"NSAccessoryViewWindow"] ||
+        [windowClassName isEqualToString:@"NSComboBoxWindow"] ||
+        [windowClassName isEqualToString:@"NSToolTipPanel"] ||
+        [windowClassName isEqualToString:@"NSStatusBarWindow"] ||
+        [windowClassName hasPrefix:@"NS_"] ||
+        [windowClassName hasPrefix:@"_NS"]) {
+        return NO;
+    }
+    
     // Exclude NSPanel subclasses (alerts, dialogs, popovers, menus)
+    // This includes NSOpenPanel, NSSavePanel, etc.
     if ([window isKindOfClass:NSClassFromString(@"NSPanel")]) return NO;
     
     // Exclude NSMenu windows
@@ -763,8 +778,17 @@ ZKSwizzleInterfaceGroup(BlurTweak_NSWindow, NSWindow, NSWindow, BLUR_TWEAK_GROUP
 - (id)initWithContentRect:(NSRect)contentRect styleMask:(NSWindowStyleMask)style backing:(NSBackingStoreType)backingStoreType defer:(BOOL)flag {
     id result = ZKOrig(id, contentRect, style, backingStoreType, flag);
     if (result && enableBlurTweak) {
-        // FORCE TRANSPARENCY IMMEDIATELY on creation
         NSWindow *window = (NSWindow *)result;
+        
+        // Early exit for panels and popup windows
+        NSString *className = NSStringFromClass([window class]);
+        if ([window isKindOfClass:NSClassFromString(@"NSPanel")] ||
+            [className hasPrefix:@"NSPopup"] ||
+            [className hasPrefix:@"TUINS"]) {
+            return result;
+        }
+        
+        // FORCE TRANSPARENCY IMMEDIATELY on creation
         window.backgroundColor = [NSColor clearColor];
         window.opaque = NO;
         
@@ -777,6 +801,14 @@ ZKSwizzleInterfaceGroup(BlurTweak_NSWindow, NSWindow, NSWindow, BLUR_TWEAK_GROUP
 
 - (void)setFrame:(NSRect)frameRect display:(BOOL)flag {
     ZKOrig(void, frameRect, flag);
+    
+    // Early exit for panels and popup windows
+    NSString *className = NSStringFromClass([self class]);
+    if ([self isKindOfClass:NSClassFromString(@"NSPanel")] ||
+        [className hasPrefix:@"NSPopup"] ||
+        [className hasPrefix:@"TUINS"]) {
+        return;
+    }
     
     if (enableBlurTweak && shouldApplyBlurEffects(self)) {
         self.backgroundColor = [NSColor clearColor];
@@ -795,6 +827,15 @@ ZKSwizzleInterfaceGroup(BlurTweak_NSWindow, NSWindow, NSWindow, BLUR_TWEAK_GROUP
 }
 
 - (void)orderFront:(id)sender {
+    // Early exit for panels and popup windows
+    NSString *className = NSStringFromClass([self class]);
+    if ([self isKindOfClass:NSClassFromString(@"NSPanel")] ||
+        [className hasPrefix:@"NSPopup"] ||
+        [className hasPrefix:@"TUINS"]) {
+        ZKOrig(void, sender);
+        return;
+    }
+    
     // FORCE TRANSPARENCY before making visible
     if (enableBlurTweak && shouldApplyBlurEffects(self)) {
         self.backgroundColor = [NSColor clearColor];
@@ -807,6 +848,14 @@ ZKSwizzleInterfaceGroup(BlurTweak_NSWindow, NSWindow, NSWindow, BLUR_TWEAK_GROUP
 
 - (void)setContentView:(NSView *)contentView {
     ZKOrig(void, contentView);
+    
+    // Early exit for panels and popup windows
+    NSString *className = NSStringFromClass([self class]);
+    if ([self isKindOfClass:NSClassFromString(@"NSPanel")] ||
+        [className hasPrefix:@"NSPopup"] ||
+        [className hasPrefix:@"TUINS"]) {
+        return;
+    }
     
     // FORCE transparency after contentView is set
     if (enableBlurTweak && shouldApplyBlurEffects(self)) {
@@ -830,6 +879,15 @@ ZKSwizzleInterfaceGroup(BlurTweak_NSWindow, NSWindow, NSWindow, BLUR_TWEAK_GROUP
 }
 
 - (void)setBackgroundColor:(NSColor *)backgroundColor {
+    // Early exit for panels and popup windows - use original color
+    NSString *className = NSStringFromClass([self class]);
+    if ([self isKindOfClass:NSClassFromString(@"NSPanel")] ||
+        [className hasPrefix:@"NSPopup"] ||
+        [className hasPrefix:@"TUINS"]) {
+        ZKOrig(void, backgroundColor);
+        return;
+    }
+    
     // INTERCEPT: Never allow opaque background if blur is enabled
     if (enableBlurTweak && shouldApplyBlurEffects(self)) {
         ZKOrig(void, [NSColor clearColor]); // FORCE clear color
@@ -839,6 +897,15 @@ ZKSwizzleInterfaceGroup(BlurTweak_NSWindow, NSWindow, NSWindow, BLUR_TWEAK_GROUP
 }
 
 - (void)setOpaque:(BOOL)opaque {
+    // Early exit for panels and popup windows - use original opacity
+    NSString *className = NSStringFromClass([self class]);
+    if ([self isKindOfClass:NSClassFromString(@"NSPanel")] ||
+        [className hasPrefix:@"NSPopup"] ||
+        [className hasPrefix:@"TUINS"]) {
+        ZKOrig(void, opaque);
+        return;
+    }
+    
     // INTERCEPT: Never allow opaque windows if blur is enabled
     if (enableBlurTweak && shouldApplyBlurEffects(self)) {
         ZKOrig(void, NO); // FORCE non-opaque
@@ -857,6 +924,14 @@ ZKSwizzleInterfaceGroup(BlurTweak_NSWindow, NSWindow, NSWindow, BLUR_TWEAK_GROUP
 - (void)becomeKeyWindow {
     ZKOrig(void);
     
+    // Early exit for panels and popup windows
+    NSString *className = NSStringFromClass([self class]);
+    if ([self isKindOfClass:NSClassFromString(@"NSPanel")] ||
+        [className hasPrefix:@"NSPopup"] ||
+        [className hasPrefix:@"TUINS"]) {
+        return;
+    }
+    
     // Reapply transparency when window becomes key (e.g., after switching directories)
     if (enableBlurTweak && shouldApplyBlurEffects(self)) {
         dispatch_async(dispatch_get_main_queue(), ^{
@@ -867,6 +942,14 @@ ZKSwizzleInterfaceGroup(BlurTweak_NSWindow, NSWindow, NSWindow, BLUR_TWEAK_GROUP
 
 - (void)makeKeyAndOrderFront:(id)sender {
     ZKOrig(void, sender);
+    
+    // Early exit for panels and popup windows
+    NSString *className = NSStringFromClass([self class]);
+    if ([self isKindOfClass:NSClassFromString(@"NSPanel")] ||
+        [className hasPrefix:@"NSPopup"] ||
+        [className hasPrefix:@"TUINS"]) {
+        return;
+    }
     
     // Reapply transparency when window is brought to front
     if (enableBlurTweak && shouldApplyBlurEffects(self)) {
@@ -891,6 +974,12 @@ ZKSwizzleInterfaceGroup(BlurTweak_NSScrollView, NSScrollView, NSScrollView, BLUR
 @implementation BlurTweak_NSScrollView
 
 - (void)setDrawsBackground:(BOOL)drawsBackground {
+    // CRITICAL: Exclude ALL views in panels (dialogs, alerts, popovers, etc.)
+    if (self.window && [self.window isKindOfClass:NSClassFromString(@"NSPanel")]) {
+        ZKOrig(void, drawsBackground);
+        return;
+    }
+    
     // FORCE no background if blur is enabled
     if (enableBlurTweak && self.window && shouldApplyBlurEffects(self.window)) {
         ZKOrig(void, NO);
@@ -900,6 +989,12 @@ ZKSwizzleInterfaceGroup(BlurTweak_NSScrollView, NSScrollView, NSScrollView, BLUR
 }
 
 - (void)setBackgroundColor:(NSColor *)backgroundColor {
+    // CRITICAL: Exclude ALL views in panels (dialogs, alerts, popovers, etc.)
+    if (self.window && [self.window isKindOfClass:NSClassFromString(@"NSPanel")]) {
+        ZKOrig(void, backgroundColor);
+        return;
+    }
+    
     // FORCE clear background if blur is enabled
     if (enableBlurTweak && self.window && shouldApplyBlurEffects(self.window)) {
         ZKOrig(void, [NSColor clearColor]);
@@ -916,6 +1011,12 @@ ZKSwizzleInterfaceGroup(BlurTweak_NSClipView, NSClipView, NSClipView, BLUR_TWEAK
 @implementation BlurTweak_NSClipView
 
 - (void)setDrawsBackground:(BOOL)drawsBackground {
+    // CRITICAL: Exclude ALL views in panels (dialogs, alerts, popovers, etc.)
+    if (self.window && [self.window isKindOfClass:NSClassFromString(@"NSPanel")]) {
+        ZKOrig(void, drawsBackground);
+        return;
+    }
+    
     // FORCE no background if blur is enabled
     if (enableBlurTweak && self.window && shouldApplyBlurEffects(self.window)) {
         ZKOrig(void, NO);
@@ -925,6 +1026,12 @@ ZKSwizzleInterfaceGroup(BlurTweak_NSClipView, NSClipView, NSClipView, BLUR_TWEAK
 }
 
 - (void)setBackgroundColor:(NSColor *)backgroundColor {
+    // CRITICAL: Exclude ALL views in panels (dialogs, alerts, popovers, etc.)
+    if (self.window && [self.window isKindOfClass:NSClassFromString(@"NSPanel")]) {
+        ZKOrig(void, backgroundColor);
+        return;
+    }
+    
     // FORCE clear background if blur is enabled
     if (enableBlurTweak && self.window && shouldApplyBlurEffects(self.window)) {
         ZKOrig(void, [NSColor clearColor]);
@@ -944,11 +1051,26 @@ ZKSwizzleInterfaceGroup(BlurTweak_NSView, NSView, NSView, BLUR_TWEAK_GROUP)
     ZKOrig(void);
     
     // Early return if not Finder or blur disabled
-    if (!enableBlurTweak || !self.window || !shouldApplyBlurEffects(self.window)) {
+    if (!enableBlurTweak || !self.window) {
+        return;
+    }
+    
+    // CRITICAL: Exclude ALL views in panels (dialogs, alerts, popovers, etc.)
+    if ([self.window isKindOfClass:NSClassFromString(@"NSPanel")]) {
+        return;
+    }
+    
+    // Additional check using shouldApplyBlurEffects
+    if (!shouldApplyBlurEffects(self.window)) {
         return;
     }
     
     NSString *className = NSStringFromClass([self class]);
+    
+    // Exclude FI_TSplitView from swizzling
+    if ([className isEqualToString:@"FI_TSplitView"]) {
+        return;
+    }
     
     // Skip Glass effect views themselves
     if ([self isKindOfClass:NSClassFromString(@"NSGlassEffectView")] ||
@@ -1007,6 +1129,17 @@ ZKSwizzleInterfaceGroup(BlurTweak_NSView, NSView, NSView, BLUR_TWEAK_GROUP)
 - (void)viewWillMoveToWindow:(NSWindow *)newWindow {
     ZKOrig(void, newWindow);
     
+    // Exclude FI_TSplitView from swizzling
+    NSString *className = NSStringFromClass([self class]);
+    if ([className isEqualToString:@"FI_TSplitView"]) {
+        return;
+    }
+    
+    // CRITICAL: Exclude ALL views in panels (dialogs, alerts, popovers, etc.)
+    if (newWindow && [newWindow isKindOfClass:NSClassFromString(@"NSPanel")]) {
+        return;
+    }
+    
     // Catch directory changes - reapply transparency when views are being reorganized
     if (enableBlurTweak && newWindow && shouldApplyBlurEffects(newWindow)) {
         dispatch_async(dispatch_get_main_queue(), ^{
@@ -1017,6 +1150,17 @@ ZKSwizzleInterfaceGroup(BlurTweak_NSView, NSView, NSView, BLUR_TWEAK_GROUP)
 
 - (void)setFrame:(NSRect)frame {
     ZKOrig(void, frame);
+    
+    // Exclude FI_TSplitView from swizzling
+    NSString *className = NSStringFromClass([self class]);
+    if ([className isEqualToString:@"FI_TSplitView"]) {
+        return;
+    }
+    
+    // CRITICAL: Exclude ALL views in panels (dialogs, alerts, popovers, etc.)
+    if (self.window && [self.window isKindOfClass:NSClassFromString(@"NSPanel")]) {
+        return;
+    }
     
     if (enableBlurTweak && enableNavigationBlur && isNavigationView(self)) {
         NSNumber *viewKey = @((NSUInteger)self);
@@ -1031,6 +1175,17 @@ ZKSwizzleInterfaceGroup(BlurTweak_NSView, NSView, NSView, BLUR_TWEAK_GROUP)
 - (void)resizeSubviewsWithOldSize:(NSSize)oldSize {
     ZKOrig(void, oldSize);
     
+    // Exclude FI_TSplitView from swizzling
+    NSString *className = NSStringFromClass([self class]);
+    if ([className isEqualToString:@"FI_TSplitView"]) {
+        return;
+    }
+    
+    // CRITICAL: Exclude ALL views in panels (dialogs, alerts, popovers, etc.)
+    if (self.window && [self.window isKindOfClass:NSClassFromString(@"NSPanel")]) {
+        return;
+    }
+    
     if (enableBlurTweak && enableNavigationBlur && isNavigationView(self)) {
         NSNumber *viewKey = @((NSUInteger)self);
         NSView *navBlurView = navigationBlurViews[viewKey];
@@ -1042,9 +1197,21 @@ ZKSwizzleInterfaceGroup(BlurTweak_NSView, NSView, NSView, BLUR_TWEAK_GROUP)
 }
 
 - (void)drawRect:(NSRect)dirtyRect {
+    // Exclude FI_TSplitView from swizzling
+    NSString *className = NSStringFromClass([self class]);
+    if ([className isEqualToString:@"FI_TSplitView"]) {
+        ZKOrig(void, dirtyRect);
+        return;
+    }
+    
+    // CRITICAL: Exclude ALL views in panels (dialogs, alerts, popovers, etc.)
+    if (self.window && [self.window isKindOfClass:NSClassFromString(@"NSPanel")]) {
+        ZKOrig(void, dirtyRect);
+        return;
+    }
+    
     // Intercept drawing for Finder UI elements - prevent opaque backgrounds
     if (enableBlurTweak && self.window && shouldApplyBlurEffects(self.window)) {
-        NSString *className = NSStringFromClass([self class]);
         
         if (isFinderUIElement(className)) {
             // Don't draw anything - just clear to transparent
