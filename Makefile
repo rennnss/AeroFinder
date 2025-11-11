@@ -47,8 +47,8 @@ CLI_OBJECT = $(BUILD_DIR)/blurctl.o
 # Installation paths
 INSTALL_PATH = $(INSTALL_DIR)/$(DYLIB_NAME)
 CLI_INSTALL_PATH = $(CLI_INSTALL_DIR)/$(CLI_NAME)
-BLACKLIST_SOURCE = lib$(PROJECT).dylib.blacklist
-BLACKLIST_DEST = $(INSTALL_DIR)/lib$(PROJECT).dylib.blacklist
+BLACKLIST_SOURCE = lib$(PROJECT).dylib.whitelist
+BLACKLIST_DEST = $(INSTALL_DIR)/lib$(PROJECT).dylib.whitelist
 
 # Dylib settings
 DYLIB_FLAGS = -dynamiclib \

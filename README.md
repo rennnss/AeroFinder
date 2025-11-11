@@ -1,6 +1,12 @@
 # macOS Finder Advanced Material Tweak with Liquid Glass
 
+<<<<<<< HEAD
 An advanced macOS tweak that applies sophisticated material rendering to Finder windows using Apple's latest **Liquid Glass** technology (NSGlassEffectView) with graceful fallback to NSVisualEffectView for older systems.
+=======
+<img width="1393" height="718" alt="image" src="https://github.com/user-attachments/assets/0c5b9233-b52a-4571-b826-a3f5c4602823" />
+
+This tweak modifies the Finder window appearance on macOS:
+>>>>>>> 451f3b34e7bda545f43708548e1faa7f14e43497
 
 ## Features
 
@@ -267,16 +273,28 @@ blurctl nav-toggle
 
 ## Notes
 
+<<<<<<< HEAD
 - The tweak does not apply to other apps or system dialogs
 - Requires dylib injection (via DYLD_INSERT_LIBRARIES or similar)
 - Finder must be restarted after enabling/disabling
 - Performance impact is minimal (compositing done by GPU)
 - Compatible with Finder's native transparency features
+=======
+- The tweak does not apply to other apps or system dialogs.
+- No blur or vibrancy is used—only transparency.
+- Requires SIP and Library Validation to be disabled and ammonia for injection.
+>>>>>>> 451f3b34e7bda545f43708548e1faa7f14e43497
 
 ## Advanced Usage
 
+<<<<<<< HEAD
 ### Custom Material Selection
 Edit `blurtweak.m` and modify `getMaterialForAppearance()`:
+=======
+- Install ammonia from : https://github.com/CoreBedtime/ammonia
+```bash
+git clone https://github.com/rennnss/AeroFinder.git
+>>>>>>> 451f3b34e7bda545f43708548e1faa7f14e43497
 
 ```objc
 static NSVisualEffectMaterial getMaterialForAppearance(BOOL isNavigationArea) {
