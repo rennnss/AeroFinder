@@ -29,6 +29,7 @@ static NSMutableDictionary *glassViews = nil;
 static NSMutableDictionary *windowTimers = nil;
 static NSMutableSet *blockedViews = nil;
 static NSMutableDictionary *displayLinks = nil;
+static NSColor *clearColorCache = nil;  // Performance: Cache clear color to avoid repeated allocations
 
 #pragma mark - Helper Functions
 
@@ -55,6 +56,27 @@ static inline BOOL checkGlassAvailability(void) {
 // Check if window should be modified
 static inline BOOL shouldModifyWindow(NSWindow *window) {
     if (!window || !tweakEnabled || !isFinderProcess()) return NO;
+    
+    // EXCLUDE: TGoToWindowController and related windows - never touch these
+    NSString *windowClassName = NSStringFromClass([window class]);
+    
+    // Check window class name
+    if ([windowClassName isEqualToString:@"TGoToWindowController"]) return NO;
+    if ([windowClassName containsString:@"TGoToWindow"]) return NO;
+    if ([windowClassName containsString:@"GoToWindow"]) return NO;
+    
+    // Check window controller class name
+    if (window.windowController) {
+        NSString *controllerClassName = NSStringFromClass([window.windowController class]);
+        if ([controllerClassName isEqualToString:@"TGoToWindowController"]) return NO;
+        if ([controllerClassName containsString:@"TGoToWindow"]) return NO;
+        if ([controllerClassName containsString:@"GoToWindow"]) return NO;
+    }
+    
+    // Check window title for Go To dialog
+    if ([window.title containsString:@"Go to"] || 
+        [window.title containsString:@"Go To"] ||
+        [window.title isEqualToString:@"Go to the Folder:"]) return NO;
     
     // Only normal Finder windows
     if (window.level != NSNormalWindowLevel) return NO;
@@ -84,6 +106,9 @@ static void setGlassStyleClear(NSView *glassView) {
 static void hideVisualEffectViews(NSView *view) {
     if (!view) return;
     
+    // CRITICAL: Skip views from excluded windows
+    if (view.window && !shouldModifyWindow(view.window)) return;
+    
     for (NSView *subview in [view.subviews copy]) {
         if ([subview isKindOfClass:[NSVisualEffectView class]]) {
             NSLog(@"[AeroFinder] Hiding NSVisualEffectView");
@@ -98,7 +123,11 @@ static void hideVisualEffectViews(NSView *view) {
 static void forceHideBackgrounds(NSView *view) {
     if (!view) return;
     
-    NSString *className = NSStringFromClass([view class]);
+    // CRITICAL: Skip views from excluded windows
+    if (view.window && !shouldModifyWindow(view.window)) return;
+    
+    // Cache class and do single check
+    Class viewClass = [view class];
     
     // Track and remove NSVisualEffectView completely
     if ([view isKindOfClass:[NSVisualEffectView class]]) {
@@ -108,6 +137,9 @@ static void forceHideBackgrounds(NSView *view) {
         [view removeFromSuperview];
         return;
     }
+    
+    // Get className only once if needed for string comparison
+    NSString *className = NSStringFromClass(viewClass);
     
     // Track and remove known background views completely
     if ([className isEqualToString:@"NSTitlebarBackgroundView"] ||
@@ -120,16 +152,21 @@ static void forceHideBackgrounds(NSView *view) {
         return;
     }
     
+    // Use cached clear color
+    if (!clearColorCache) {
+        clearColorCache = [NSColor clearColor];
+    }
+    
     // Force TScrollView transparency
     if ([className isEqualToString:@"TScrollView"]) {
         if ([view respondsToSelector:@selector(setDrawsBackground:)]) {
             @try { [(id)view setDrawsBackground:NO]; } @catch (NSException *e) {}
         }
         if ([view respondsToSelector:@selector(setBackgroundColor:)]) {
-            @try { [(id)view setBackgroundColor:[NSColor clearColor]]; } @catch (NSException *e) {}
+            @try { [(id)view setBackgroundColor:clearColorCache]; } @catch (NSException *e) {}
         }
         if (view.layer) {
-            view.layer.backgroundColor = [[NSColor clearColor] CGColor];
+            view.layer.backgroundColor = [clearColorCache CGColor];
             view.layer.opaque = NO;
         }
     }
@@ -141,70 +178,40 @@ static void forceHideBackgrounds(NSView *view) {
             @try { [scrollView setDrawsBackground:NO]; } @catch (NSException *e) {}
         }
         if ([scrollView respondsToSelector:@selector(setBackgroundColor:)]) {
-            @try { [scrollView setBackgroundColor:[NSColor clearColor]]; } @catch (NSException *e) {}
+            @try { [scrollView setBackgroundColor:clearColorCache]; } @catch (NSException *e) {}
         }
         if (scrollView.layer) {
-            [CATransaction begin];
-            [CATransaction setDisableActions:YES];
-            scrollView.layer.backgroundColor = [[NSColor clearColor] CGColor];
+            scrollView.layer.backgroundColor = [clearColorCache CGColor];
             scrollView.layer.opaque = NO;
-            [CATransaction commit];
         }
         
         // Force contentView transparency
-        if (scrollView.contentView) {
-            NSClipView *clipView = scrollView.contentView;
+        NSClipView *clipView = scrollView.contentView;
+        if (clipView) {
             if ([clipView respondsToSelector:@selector(setDrawsBackground:)]) {
                 @try { [clipView setDrawsBackground:NO]; } @catch (NSException *e) {}
             }
             if ([clipView respondsToSelector:@selector(setBackgroundColor:)]) {
-                @try { [clipView setBackgroundColor:[NSColor clearColor]]; } @catch (NSException *e) {}
+                @try { [clipView setBackgroundColor:clearColorCache]; } @catch (NSException *e) {}
             }
             if (clipView.layer) {
-                [CATransaction begin];
-                [CATransaction setDisableActions:YES];
-                clipView.layer.backgroundColor = [[NSColor clearColor] CGColor];
+                clipView.layer.backgroundColor = [clearColorCache CGColor];
                 clipView.layer.opaque = NO;
-                [CATransaction commit];
-            }
-        }
-        
-        // Force documentView transparency if it's not the file list
-        if (scrollView.documentView) {
-            NSView *docView = scrollView.documentView;
-            NSString *docClassName = NSStringFromClass([docView class]);
-            // Only make transparent if it's not the actual content view
-            if (![docClassName containsString:@"BrowserColumn"] && 
-                ![docClassName containsString:@"IconView"] &&
-                ![docClassName containsString:@"ListView"]) {
-                if ([docView respondsToSelector:@selector(setDrawsBackground:)]) {
-                    @try { [(id)docView setDrawsBackground:NO]; } @catch (NSException *e) {}
-                }
-                if ([docView respondsToSelector:@selector(setBackgroundColor:)]) {
-                    @try { [(id)docView setBackgroundColor:[NSColor clearColor]]; } @catch (NSException *e) {}
-                }
-                if (docView.layer) {
-                    docView.layer.backgroundColor = [[NSColor clearColor] CGColor];
-                    docView.layer.opaque = NO;
-                }
             }
         }
     }
     
-    // Force all NSClipView to be transparent
-    if ([view isKindOfClass:[NSClipView class]]) {
+    // Force all NSClipView to be transparent (only if not already handled above)
+    else if ([view isKindOfClass:[NSClipView class]]) {
         if ([view respondsToSelector:@selector(setDrawsBackground:)]) {
             @try { [(id)view setDrawsBackground:NO]; } @catch (NSException *e) {}
         }
         if ([view respondsToSelector:@selector(setBackgroundColor:)]) {
-            @try { [(id)view setBackgroundColor:[NSColor clearColor]]; } @catch (NSException *e) {}
+            @try { [(id)view setBackgroundColor:clearColorCache]; } @catch (NSException *e) {}
         }
         if (view.layer) {
-            [CATransaction begin];
-            [CATransaction setDisableActions:YES];
-            view.layer.backgroundColor = [[NSColor clearColor] CGColor];
+            view.layer.backgroundColor = [clearColorCache CGColor];
             view.layer.opaque = NO;
-            [CATransaction commit];
         }
     }
     
@@ -218,6 +225,9 @@ static void forceHideBackgrounds(NSView *view) {
 // Make view hierarchy transparent
 static void makeTransparent(NSView *view) {
     if (!view) return;
+    
+    // CRITICAL: Skip views from excluded windows
+    if (view.window && !shouldModifyWindow(view.window)) return;
     
     // Skip glass views
     if ([view isKindOfClass:NSClassFromString(@"NSGlassEffectView")]) return;
@@ -234,8 +244,12 @@ static void makeTransparent(NSView *view) {
         @try { [(id)view setDrawsBackground:NO]; } @catch (NSException *e) {}
     }
     
+    if (!clearColorCache) {
+        clearColorCache = [NSColor clearColor];
+    }
+    
     if ([view respondsToSelector:@selector(setBackgroundColor:)]) {
-        @try { [(id)view setBackgroundColor:[NSColor clearColor]]; } @catch (NSException *e) {}
+        @try { [(id)view setBackgroundColor:clearColorCache]; } @catch (NSException *e) {}
     }
     
     // Recurse
@@ -265,12 +279,21 @@ static void startBackgroundHidingTimer(NSWindow *window) {
             return;
         }
         
+        // CRITICAL: Check if window should still be modified
+        if (!shouldModifyWindow(window)) {
+            [timer invalidate];
+            return;
+        }
+        
         // ULTRA-AGGRESSIVE: Force window transparency every frame
         [CATransaction begin];
         [CATransaction setDisableActions:YES];
         [CATransaction setAnimationDuration:0];
         
-        window.backgroundColor = [NSColor clearColor];
+        if (!clearColorCache) {
+            clearColorCache = [NSColor clearColor];
+        }
+        window.backgroundColor = clearColorCache;
         window.opaque = NO;
         
         // Force hide all background views
@@ -340,7 +363,10 @@ static void applyGlassEffect(NSWindow *window) {
     }
     
     // Make window transparent
-    window.backgroundColor = [NSColor clearColor];
+    if (!clearColorCache) {
+        clearColorCache = [NSColor clearColor];
+    }
+    window.backgroundColor = clearColorCache;
     window.opaque = NO;
     
     // Hide all NSVisualEffectViews
@@ -461,8 +487,25 @@ ZKSwizzleInterface(_AeroFinder_NSWindow, NSWindow, NSObject)
 }
 
 - (void)setFrame:(NSRect)frameRect display:(BOOL)flag {
-    ZKOrig(void, frameRect, flag);
     NSWindow *window = (NSWindow *)self;
+    
+    if (tweakEnabled && shouldModifyWindow(window)) {
+        // CRITICAL: Force transparency BEFORE resize to prevent opaque flash
+        [CATransaction begin];
+        [CATransaction setDisableActions:YES];
+        [CATransaction setAnimationDuration:0];
+        
+        if (!clearColorCache) {
+            clearColorCache = [NSColor clearColor];
+        }
+        window.backgroundColor = clearColorCache;
+        window.opaque = NO;
+        
+        [CATransaction commit];
+    }
+    
+    ZKOrig(void, frameRect, flag);
+    
     if (tweakEnabled && shouldModifyWindow(window)) {
         // DYNAMIC ADAPTATION: Update glass layer when window frame changes
         NSNumber *key = @((NSUInteger)window);
@@ -471,12 +514,21 @@ ZKSwizzleInterface(_AeroFinder_NSWindow, NSWindow, NSObject)
             [CATransaction begin];
             [CATransaction setDisableActions:YES];
             [CATransaction setAnimationDuration:0];
+            
             NSRect extendedFrame = NSInsetRect(window.contentView.bounds, -20, -20);
             glassView.frame = extendedFrame;
             if (glassView.layer) {
                 glassView.layer.cornerRadius = 12.0;
                 glassView.layer.masksToBounds = YES;
             }
+            
+            // Force window transparency AFTER resize too
+            window.backgroundColor = clearColorCache;
+            window.opaque = NO;
+            
+            // Force hide backgrounds during resize
+            forceHideBackgrounds(window.contentView);
+            
             [CATransaction commit];
         }
     }
@@ -500,6 +552,50 @@ ZKSwizzleInterface(_AeroFinder_NSWindow, NSWindow, NSObject)
     }
 }
 
+// CRITICAL: Intercept live resize start to maintain transparency
+- (void)viewWillStartLiveResize {
+    NSWindow *window = (NSWindow *)self;
+    if (tweakEnabled && shouldModifyWindow(window)) {
+        [CATransaction begin];
+        [CATransaction setDisableActions:YES];
+        [CATransaction setAnimationDuration:0];
+        
+        if (!clearColorCache) {
+            clearColorCache = [NSColor clearColor];
+        }
+        window.backgroundColor = clearColorCache;
+        window.opaque = NO;
+        
+        // Force hide backgrounds immediately
+        forceHideBackgrounds(window.contentView);
+        
+        [CATransaction commit];
+    }
+    ZKOrig(void);
+}
+
+// CRITICAL: Intercept live resize end to ensure transparency is maintained
+- (void)viewDidEndLiveResize {
+    NSWindow *window = (NSWindow *)self;
+    if (tweakEnabled && shouldModifyWindow(window)) {
+        [CATransaction begin];
+        [CATransaction setDisableActions:YES];
+        [CATransaction setAnimationDuration:0];
+        
+        if (!clearColorCache) {
+            clearColorCache = [NSColor clearColor];
+        }
+        window.backgroundColor = clearColorCache;
+        window.opaque = NO;
+        
+        // Force hide backgrounds immediately
+        forceHideBackgrounds(window.contentView);
+        
+        [CATransaction commit];
+    }
+    ZKOrig(void);
+}
+
 @end
 
 #pragma mark - NSClipView Swizzles
@@ -511,6 +607,10 @@ ZKSwizzleInterface(_AeroFinder_NSClipView, NSClipView, NSObject)
     // CRITICAL: During scrolling bounds changes, force transparency
     NSClipView *clipView = (NSClipView *)self;
     if (tweakEnabled && clipView.window && shouldModifyWindow(clipView.window)) {
+        if (!clearColorCache) {
+            clearColorCache = [NSColor clearColor];
+        }
+        
         [CATransaction begin];
         [CATransaction setDisableActions:YES];
         [CATransaction setAnimationDuration:0];
@@ -519,10 +619,10 @@ ZKSwizzleInterface(_AeroFinder_NSClipView, NSClipView, NSObject)
             @try { [clipView setDrawsBackground:NO]; } @catch (NSException *e) {}
         }
         if ([clipView respondsToSelector:@selector(setBackgroundColor:)]) {
-            @try { [clipView setBackgroundColor:[NSColor clearColor]]; } @catch (NSException *e) {}
+            @try { [clipView setBackgroundColor:clearColorCache]; } @catch (NSException *e) {}
         }
         if (clipView.layer) {
-            clipView.layer.backgroundColor = [[NSColor clearColor] CGColor];
+            clipView.layer.backgroundColor = [clearColorCache CGColor];
             clipView.layer.opaque = NO;
         }
         
@@ -536,6 +636,10 @@ ZKSwizzleInterface(_AeroFinder_NSClipView, NSClipView, NSObject)
     // CRITICAL: During scroll, force transparency
     NSClipView *clipView = (NSClipView *)self;
     if (tweakEnabled && clipView.window && shouldModifyWindow(clipView.window)) {
+        if (!clearColorCache) {
+            clearColorCache = [NSColor clearColor];
+        }
+        
         [CATransaction begin];
         [CATransaction setDisableActions:YES];
         [CATransaction setAnimationDuration:0];
@@ -544,10 +648,10 @@ ZKSwizzleInterface(_AeroFinder_NSClipView, NSClipView, NSObject)
             @try { [clipView setDrawsBackground:NO]; } @catch (NSException *e) {}
         }
         if ([clipView respondsToSelector:@selector(setBackgroundColor:)]) {
-            @try { [clipView setBackgroundColor:[NSColor clearColor]]; } @catch (NSException *e) {}
+            @try { [clipView setBackgroundColor:clearColorCache]; } @catch (NSException *e) {}
         }
         if (clipView.layer) {
-            clipView.layer.backgroundColor = [[NSColor clearColor] CGColor];
+            clipView.layer.backgroundColor = [clearColorCache CGColor];
             clipView.layer.opaque = NO;
         }
         
@@ -568,6 +672,10 @@ ZKSwizzleInterface(_AeroFinder_NSScrollView, NSScrollView, NSObject)
     // CRITICAL: During scroll, force transparency to prevent background flicker
     NSScrollView *scrollView = (NSScrollView *)self;
     if (tweakEnabled && scrollView.window && shouldModifyWindow(scrollView.window)) {
+        if (!clearColorCache) {
+            clearColorCache = [NSColor clearColor];
+        }
+        
         [CATransaction begin];
         [CATransaction setDisableActions:YES];
         [CATransaction setAnimationDuration:0];
@@ -577,10 +685,10 @@ ZKSwizzleInterface(_AeroFinder_NSScrollView, NSScrollView, NSObject)
             @try { [scrollView setDrawsBackground:NO]; } @catch (NSException *e) {}
         }
         if ([scrollView respondsToSelector:@selector(setBackgroundColor:)]) {
-            @try { [scrollView setBackgroundColor:[NSColor clearColor]]; } @catch (NSException *e) {}
+            @try { [scrollView setBackgroundColor:clearColorCache]; } @catch (NSException *e) {}
         }
         if (scrollView.layer) {
-            scrollView.layer.backgroundColor = [[NSColor clearColor] CGColor];
+            scrollView.layer.backgroundColor = [clearColorCache CGColor];
             scrollView.layer.opaque = NO;
         }
         
@@ -589,10 +697,10 @@ ZKSwizzleInterface(_AeroFinder_NSScrollView, NSScrollView, NSObject)
             @try { [clipView setDrawsBackground:NO]; } @catch (NSException *e) {}
         }
         if ([clipView respondsToSelector:@selector(setBackgroundColor:)]) {
-            @try { [clipView setBackgroundColor:[NSColor clearColor]]; } @catch (NSException *e) {}
+            @try { [clipView setBackgroundColor:clearColorCache]; } @catch (NSException *e) {}
         }
         if (clipView.layer) {
-            clipView.layer.backgroundColor = [[NSColor clearColor] CGColor];
+            clipView.layer.backgroundColor = [clearColorCache CGColor];
             clipView.layer.opaque = NO;
         }
         
@@ -606,6 +714,10 @@ ZKSwizzleInterface(_AeroFinder_NSScrollView, NSScrollView, NSObject)
     // Intercept tile (layout) to force transparency
     NSScrollView *scrollView = (NSScrollView *)self;
     if (tweakEnabled && scrollView.window && shouldModifyWindow(scrollView.window)) {
+        if (!clearColorCache) {
+            clearColorCache = [NSColor clearColor];
+        }
+        
         [CATransaction begin];
         [CATransaction setDisableActions:YES];
         [CATransaction setAnimationDuration:0];
@@ -614,10 +726,10 @@ ZKSwizzleInterface(_AeroFinder_NSScrollView, NSScrollView, NSObject)
             @try { [scrollView setDrawsBackground:NO]; } @catch (NSException *e) {}
         }
         if ([scrollView respondsToSelector:@selector(setBackgroundColor:)]) {
-            @try { [scrollView setBackgroundColor:[NSColor clearColor]]; } @catch (NSException *e) {}
+            @try { [scrollView setBackgroundColor:clearColorCache]; } @catch (NSException *e) {}
         }
         if (scrollView.layer) {
-            scrollView.layer.backgroundColor = [[NSColor clearColor] CGColor];
+            scrollView.layer.backgroundColor = [clearColorCache CGColor];
             scrollView.layer.opaque = NO;
         }
         
@@ -632,39 +744,43 @@ ZKSwizzleInterface(_AeroFinder_NSScrollView, NSScrollView, NSObject)
     
     // DYNAMIC ADAPTATION: Update glass layer when content view layout changes
     NSView *view = (NSView *)self;
-    if (tweakEnabled && view.window && shouldModifyWindow(view.window)) {
-        // If this is the content view, ensure glass layer is properly sized
-        if (view == view.window.contentView) {
-            NSNumber *key = @((NSUInteger)view.window);
-            NSView *glassView = glassViews[key];
-            if (glassView && glassView.superview) {
-                [CATransaction begin];
-                [CATransaction setDisableActions:YES];
-                [CATransaction setAnimationDuration:0];
-                
-                // Update glass frame to match content view
-                NSRect extendedFrame = NSInsetRect(view.bounds, -20, -20);
-                if (!NSEqualRects(glassView.frame, extendedFrame)) {
-                    glassView.frame = extendedFrame;
-                    if (glassView.layer) {
-                        glassView.layer.cornerRadius = 12.0;
-                        glassView.layer.masksToBounds = YES;
-                    }
-                }
-                
-                // Ensure glass stays at bottom
-                NSView *bottomView = view.subviews.firstObject;
-                if (bottomView != glassView && view.subviews.count > 1) {
-                    [glassView removeFromSuperview];
-                    [view addSubview:glassView positioned:NSWindowBelow relativeTo:view.subviews.firstObject];
-                    if (glassView.layer) {
-                        glassView.layer.zPosition = -1000.0;
-                    }
-                }
-                
-                [CATransaction commit];
+    // Early exit if not enabled or not our window
+    if (!tweakEnabled || !view.window || !shouldModifyWindow(view.window)) return;
+    
+    // Only process if this is the content view
+    if (view != view.window.contentView) return;
+    
+    NSNumber *key = @((NSUInteger)view.window);
+    NSView *glassView = glassViews[key];
+    if (!glassView || !glassView.superview) return;
+    
+    NSRect extendedFrame = NSInsetRect(view.bounds, -20, -20);
+    BOOL needsFrameUpdate = !NSEqualRects(glassView.frame, extendedFrame);
+    BOOL needsRepositioning = (view.subviews.firstObject != glassView && view.subviews.count > 1);
+    
+    // Only update if something changed
+    if (needsFrameUpdate || needsRepositioning) {
+        [CATransaction begin];
+        [CATransaction setDisableActions:YES];
+        [CATransaction setAnimationDuration:0];
+        
+        if (needsFrameUpdate) {
+            glassView.frame = extendedFrame;
+            if (glassView.layer) {
+                glassView.layer.cornerRadius = 12.0;
+                glassView.layer.masksToBounds = YES;
             }
         }
+        
+        if (needsRepositioning) {
+            [glassView removeFromSuperview];
+            [view addSubview:glassView positioned:NSWindowBelow relativeTo:view.subviews.firstObject];
+            if (glassView.layer) {
+                glassView.layer.zPosition = -1000.0;
+            }
+        }
+        
+        [CATransaction commit];
     }
 }
 
@@ -677,35 +793,60 @@ ZKSwizzleInterface(_AeroFinder_NSView, NSView, NSObject)
 
 - (void)viewDidMoveToSuperview {
     NSView *view = (NSView *)self;
-    NSString *className = NSStringFromClass([view class]);
+    
+    // Early exit if not enabled
+    if (!tweakEnabled || !view.window || !shouldModifyWindow(view.window)) {
+        ZKOrig(void);
+        return;
+    }
+    
+    // Cache class checks
+    Class viewClass = [view class];
+    BOOL isVisualEffect = [view isKindOfClass:[NSVisualEffectView class]];
+    
+    if (isVisualEffect) {
+        @synchronized(blockedViews) {
+            [blockedViews addObject:[NSValue valueWithNonretainedObject:view]];
+        }
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [view removeFromSuperview];
+        });
+        return; // Don't call original
+    }
+    
+    NSString *className = NSStringFromClass(viewClass);
     
     // INTERCEPT: Remove background views IMMEDIATELY when added to hierarchy
-    if (tweakEnabled && view.window && shouldModifyWindow(view.window)) {
-        if ([view isKindOfClass:[NSVisualEffectView class]] ||
-            [className isEqualToString:@"NSTitlebarBackgroundView"] ||
-            [className isEqualToString:@"_NSScrollViewContentBackgroundView"] ||
-            [className isEqualToString:@"BackdropView"]) {
-            
-            @synchronized(blockedViews) {
-                [blockedViews addObject:[NSValue valueWithNonretainedObject:view]];
-            }
-            
-            // Remove immediately - don't even let it render once
-            dispatch_async(dispatch_get_main_queue(), ^{
-                [view removeFromSuperview];
-            });
-            
-            return; // Don't call original
+    if ([className isEqualToString:@"NSTitlebarBackgroundView"] ||
+        [className isEqualToString:@"_NSScrollViewContentBackgroundView"] ||
+        [className isEqualToString:@"BackdropView"]) {
+        
+        @synchronized(blockedViews) {
+            [blockedViews addObject:[NSValue valueWithNonretainedObject:view]];
         }
         
-        // Force transparency for scroll views
-        if ([view isKindOfClass:[NSScrollView class]] || [view isKindOfClass:[NSClipView class]]) {
-            if ([view respondsToSelector:@selector(setDrawsBackground:)]) {
-                @try { [(id)view setDrawsBackground:NO]; } @catch (NSException *e) {}
-            }
-            if ([view respondsToSelector:@selector(setBackgroundColor:)]) {
-                @try { [(id)view setBackgroundColor:[NSColor clearColor]]; } @catch (NSException *e) {}
-            }
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [view removeFromSuperview];
+        });
+        
+        return; // Don't call original
+    }
+    
+    // Use cached clear color
+    if (!clearColorCache) {
+        clearColorCache = [NSColor clearColor];
+    }
+    
+    // Force transparency for scroll views
+    BOOL isScrollView = [view isKindOfClass:[NSScrollView class]];
+    BOOL isClipView = !isScrollView && [view isKindOfClass:[NSClipView class]];
+    
+    if (isScrollView || isClipView) {
+        if ([view respondsToSelector:@selector(setDrawsBackground:)]) {
+            @try { [(id)view setDrawsBackground:NO]; } @catch (NSException *e) {}
+        }
+        if ([view respondsToSelector:@selector(setBackgroundColor:)]) {
+            @try { [(id)view setBackgroundColor:clearColorCache]; } @catch (NSException *e) {}
         }
     }
     
@@ -782,12 +923,11 @@ ZKSwizzleInterface(_AeroFinder_NSView, NSView, NSObject)
         [view isKindOfClass:[NSClipView class]]) {
         // Force layer to be transparent
         if (view.layer) {
-            [CATransaction begin];
-            [CATransaction setDisableActions:YES];
-            [CATransaction setAnimationDuration:0];
-            view.layer.backgroundColor = [[NSColor clearColor] CGColor];
+            if (!clearColorCache) {
+                clearColorCache = [NSColor clearColor];
+            }
+            view.layer.backgroundColor = [clearColorCache CGColor];
             view.layer.opaque = NO;
-            [CATransaction commit];
         }
         return;
     }
@@ -797,24 +937,23 @@ ZKSwizzleInterface(_AeroFinder_NSView, NSView, NSObject)
 
 - (void)setFrame:(NSRect)frame {
     NSView *view = (NSView *)self;
-    NSString *className = NSStringFromClass([view class]);
     
     // CRITICAL: During frame changes, force transparency to prevent flicker
     if (tweakEnabled && view.window && shouldModifyWindow(view.window)) {
         if ([view isKindOfClass:[NSScrollView class]] || [view isKindOfClass:[NSClipView class]]) {
+            if (!clearColorCache) {
+                clearColorCache = [NSColor clearColor];
+            }
+            
             if ([view respondsToSelector:@selector(setDrawsBackground:)]) {
                 @try { [(id)view setDrawsBackground:NO]; } @catch (NSException *e) {}
             }
             if ([view respondsToSelector:@selector(setBackgroundColor:)]) {
-                @try { [(id)view setBackgroundColor:[NSColor clearColor]]; } @catch (NSException *e) {}
+                @try { [(id)view setBackgroundColor:clearColorCache]; } @catch (NSException *e) {}
             }
             if (view.layer) {
-                [CATransaction begin];
-                [CATransaction setDisableActions:YES];
-                [CATransaction setAnimationDuration:0];
-                view.layer.backgroundColor = [[NSColor clearColor] CGColor];
+                view.layer.backgroundColor = [clearColorCache CGColor];
                 view.layer.opaque = NO;
-                [CATransaction commit];
             }
         }
     }
