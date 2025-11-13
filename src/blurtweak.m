@@ -313,7 +313,7 @@ static void startBackgroundHidingTimer(NSWindow *window) {
             }
             
             // Dynamically adapt frame to content view bounds
-            NSRect extendedFrame = NSInsetRect(window.contentView.bounds, -20, -20);
+            NSRect extendedFrame = NSInsetRect(window.contentView.bounds, -3, -3);
             if (!NSEqualRects(glassView.frame, extendedFrame)) {
                 glassView.frame = extendedFrame;
                 if (glassView.layer) {
@@ -345,8 +345,8 @@ static void applyGlassEffect(NSWindow *window) {
         Class glassClass = NSClassFromString(@"NSGlassEffectView");
         if (!glassClass) return;
         
-        // EXTENDED FRAME: Inset by -20 to cover corners
-        NSRect extendedFrame = NSInsetRect(contentView.bounds, -20, -20);
+        // MINIMAL CORNER EXTENSION: Inset by -3 to cover just corners
+        NSRect extendedFrame = NSInsetRect(contentView.bounds, -3, -3);
         glassView = [[glassClass alloc] initWithFrame:extendedFrame];
         setGlassStyleClear(glassView);
         
@@ -401,7 +401,7 @@ static void applyGlassEffect(NSWindow *window) {
     }
     
     // DYNAMIC ADAPTATION: Force glass frame to match content view bounds exactly
-    NSRect extendedFrame = NSInsetRect(contentView.bounds, -20, -20);
+    NSRect extendedFrame = NSInsetRect(contentView.bounds, -3, -3);
     if (!NSEqualRects(glassView.frame, extendedFrame)) {
         [CATransaction begin];
         [CATransaction setDisableActions:YES];
@@ -515,7 +515,7 @@ ZKSwizzleInterface(_AeroFinder_NSWindow, NSWindow, NSObject)
             [CATransaction setDisableActions:YES];
             [CATransaction setAnimationDuration:0];
             
-            NSRect extendedFrame = NSInsetRect(window.contentView.bounds, -20, -20);
+            NSRect extendedFrame = NSInsetRect(window.contentView.bounds, -3, -3);
             glassView.frame = extendedFrame;
             if (glassView.layer) {
                 glassView.layer.cornerRadius = 12.0;
@@ -754,7 +754,7 @@ ZKSwizzleInterface(_AeroFinder_NSScrollView, NSScrollView, NSObject)
     NSView *glassView = glassViews[key];
     if (!glassView || !glassView.superview) return;
     
-    NSRect extendedFrame = NSInsetRect(view.bounds, -20, -20);
+    NSRect extendedFrame = NSInsetRect(view.bounds, -3, -3);
     BOOL needsFrameUpdate = !NSEqualRects(glassView.frame, extendedFrame);
     BOOL needsRepositioning = (view.subviews.firstObject != glassView && view.subviews.count > 1);
     
