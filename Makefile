@@ -19,7 +19,9 @@ CFLAGS = -Wall -Wextra -O2 \
     -isysroot $(SDKROOT) \
     -iframework $(SDKROOT)/System/Library/Frameworks \
     -F/System/Library/PrivateFrameworks \
-    -I$(REPO_ROOT)/ZKSwizzle
+    -I$(REPO_ROOT)/ZKSwizzle \
+    -Wno-deprecated-declarations \
+    -Wno-cast-function-type-mismatch
 
 ARCHS = -arch x86_64 -arch arm64 -arch arm64e
 FRAMEWORK_PATH = $(SDKROOT)/System/Library/Frameworks
@@ -50,6 +52,22 @@ DYLIB_FLAGS = -dynamiclib \
               -install_name @rpath/$(DYLIB_NAME) \
               -compatibility_version 1.0.0 \
               -current_version 1.0.0
+
+# Help target - show usage information
+help:
+	@echo "macOS Blur Tweak Makefile"
+	@echo ""
+	@echo "Available targets:"
+	@echo "  make          - Build the blur tweak dylib (default, runs clean first)"
+	@echo "  make install  - Build and install the dylib to $(INSTALL_DIR)"
+	@echo "  make test     - Install and restart Finder"
+	@echo "  make clean    - Remove build directory and compiled objects"
+	@echo "  make uninstall - Remove installed dylib and configuration files"
+	@echo "  make help     - Show this help message"
+	@echo ""
+	@echo "Project: $(PROJECT)"
+	@echo "Output: $(BUILD_DIR)/$(DYLIB_NAME)"
+	@echo "Install path: $(INSTALL_PATH)"
 
 # Default target
 all: clean $(BUILD_DIR)/$(DYLIB_NAME)
@@ -93,17 +111,12 @@ install: $(BUILD_DIR)/$(DYLIB_NAME)
 
 # Test target
 test: install
-	@echo "Restarting test applications..."
-	$(eval TEST_APPS := Finder Safari Notes "System Settings" Calculator TextEdit)
-	@for app in $(TEST_APPS); do \
-		pkill -9 "$$app" 2>/dev/null || true; \
-	done
+	@echo "Killing Finder completely..."
+	@killall Finder 2>/dev/null || true
+	@pkill -9 Finder 2>/dev/null || true
 	@sleep 1
-	@echo "Relaunching test applications..."
-	@for app in $(TEST_APPS); do \
-		open -a "$$app" 2>/dev/null || true; \
-	done
-	@echo "Test applications restarted with blur tweak"
+	@echo "Opening Finder twice..."
+	@open -a Finder; open -a Finder
 
 # Clean build files
 clean:
@@ -116,17 +129,4 @@ uninstall:
 	@sudo rm -f $(BLACKLIST_DEST)
 	@echo "Uninstalled $(DYLIB_NAME)"
 
-# Delete and restart apps
-delete:
-	@echo "Removing blur tweak and restarting apps..."
-	$(eval TEST_APPS := Finder Safari Notes "System Settings" Calculator TextEdit)
-	@for app in $(TEST_APPS); do \
-		pkill -9 "$$app" 2>/dev/null || true; \
-	done
-	@sudo rm -f $(INSTALL_PATH)
-	@sudo rm -f $(BLACKLIST_DEST)
-	@sleep 1
-	@open -a "Finder" || true
-	@echo "Blur tweak removed and apps restarted"
-
-.PHONY: all clean install test uninstall delete
+.PHONY: all clean install test uninstall help
