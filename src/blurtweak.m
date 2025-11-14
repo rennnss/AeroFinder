@@ -265,6 +265,12 @@ static inline void ensureTransparentScrollStack(NSScrollView *scrollView) {
     
     void (^applyTransparency)(NSView *) = ^(NSView *view) {
         if (!view || isQuickLookOrWebKitView(view)) return;
+        
+        // Enable layer backing for consistent transparency
+        if (!view.wantsLayer) {
+            view.wantsLayer = YES;
+        }
+        
         if ([view respondsToSelector:@selector(setDrawsBackground:)]) {
             @try { [(id)view setDrawsBackground:NO]; } @catch (NSException *e) {}
         }
@@ -279,16 +285,33 @@ static inline void ensureTransparentScrollStack(NSScrollView *scrollView) {
     
     void (^hideBackgroundLayer)(NSView *) = ^(NSView *view) {
         if (!view || isQuickLookOrWebKitView(view)) return;
-        // Use layer opacity for instant background hiding during scroll
-        if (view.wantsLayer || view.layer) {
-            if (!view.wantsLayer) view.wantsLayer = YES;
-            if ([view isKindOfClass:[NSVisualEffectView class]]) {
+        NSString *className = NSStringFromClass([view class]);
+        
+        // Target ONLY background views, not content views
+        BOOL isBackgroundView = ([view isKindOfClass:[NSVisualEffectView class]] ||
+                                [className isEqualToString:@"NSTitlebarBackgroundView"] ||
+                                [className isEqualToString:@"_NSScrollViewContentBackgroundView"] ||
+                                [className isEqualToString:@"BackdropView"] ||
+                                [className hasSuffix:@"BackgroundView"]);
+        
+        // Use layer-based transparency for background views only
+        if (isBackgroundView) {
+            if (view.layer || view.wantsLayer) {
+                if (!view.wantsLayer) view.wantsLayer = YES;
                 view.layer.opacity = 0.0;
-                view.hidden = YES;
+                view.layer.backgroundColor = [[NSColor clearColor] CGColor];
+                if ([view isKindOfClass:[NSVisualEffectView class]]) {
+                    view.hidden = YES;
+                }
             }
-            NSString *className = NSStringFromClass([view class]);
-            if ([className containsString:@"Background"] || [className containsString:@"Backdrop"]) {
-                view.layer.opacity = 0.0;
+            // Disable drawing for background views
+            if ([view respondsToSelector:@selector(setDrawsBackground:)]) {
+                @try { [(id)view setDrawsBackground:NO]; } @catch (NSException *e) {}
+            }
+        } else {
+            // For non-background views, just ensure transparent background color
+            if ([view respondsToSelector:@selector(setDrawsBackground:)]) {
+                @try { [(id)view setDrawsBackground:NO]; } @catch (NSException *e) {}
             }
         }
     };
@@ -297,12 +320,14 @@ static inline void ensureTransparentScrollStack(NSScrollView *scrollView) {
     NSClipView *clipView = scrollView.contentView;
     applyTransparency(clipView);
     
-    // Fast layer-based hiding for backgrounds
+    // Fast layer-based hiding for backgrounds - be more thorough
     for (NSView *subview in scrollView.subviews) {
         hideBackgroundLayer(subview);
+        applyTransparency(subview);
     }
     for (NSView *subview in clipView.subviews) {
         hideBackgroundLayer(subview);
+        applyTransparency(subview);
     }
     
     if ([clipView isKindOfClass:[NSClipView class]]) {
@@ -311,8 +336,19 @@ static inline void ensureTransparentScrollStack(NSScrollView *scrollView) {
             hideBackgroundLayer(documentView);
         } else {
             applyTransparency(documentView);
-            for (NSView *subview in documentView.subviews) {
-                hideBackgroundLayer(subview);
+            
+            // Apply to ALL subviews in document view to catch list backgrounds
+            NSArray *allSubviews = [documentView.subviews copy];
+            for (NSView *subview in allSubviews) {
+                NSString *subviewClass = NSStringFromClass([subview class]);
+                // Hide known background views completely
+                if ([subview isKindOfClass:[NSVisualEffectView class]] ||
+                    [subviewClass hasSuffix:@"BackgroundView"] ||
+                    [subviewClass isEqualToString:@"BackdropView"]) {
+                    hideBackgroundLayer(subview);
+                }
+                // But apply transparency to everything
+                applyTransparency(subview);
             }
         }
     }
@@ -323,20 +359,35 @@ static void forceHideBackgrounds(NSView *view) {
     if (!view) return;
     if (isQuickLookOrWebKitView(view)) return;
     if (view.window && !shouldModifyWindow(view.window)) return;
+    
+    // Enable layer backing for all views to ensure proper transparency
+    if (!view.wantsLayer) {
+        view.wantsLayer = YES;
+    }
+    
     NSArray *subviews = [view.subviews copy];
     for (NSView *subview in subviews) {
         if (isQuickLookOrWebKitView(subview)) continue;
+        
+        // Enable layer backing
+        if (!subview.wantsLayer) {
+            subview.wantsLayer = YES;
+        }
+        
         NSString *className = NSStringFromClass([subview class]);
         BOOL isBackgroundClass = ([subview isKindOfClass:[NSVisualEffectView class]] ||
                                   [className isEqualToString:@"NSTitlebarBackgroundView"] ||
                                   [className isEqualToString:@"_NSScrollViewContentBackgroundView"] ||
-                                  [className isEqualToString:@"BackdropView"]);
+                                  [className isEqualToString:@"BackdropView"] ||
+                                  [className hasSuffix:@"BackgroundView"]);
         if (isBackgroundClass) {
             dispatch_async(dispatch_get_main_queue(), ^{
                 [subview removeFromSuperview];
             });
             continue;
         }
+        
+        // Apply transparency to all views
         if ([subview respondsToSelector:@selector(setDrawsBackground:)]) {
             @try { [(id)subview setDrawsBackground:NO]; } @catch (NSException *e) {}
         }
@@ -386,17 +437,23 @@ static CVReturn displayLinkCallback(CVDisplayLinkRef link,
     (void)flagsOut;
         NSWindow *window = (__bridge NSWindow *)displayLinkContext;
         if (!window) return kCVReturnSuccess;
+        
+        // Use weak reference to avoid retaining window
+        __weak NSWindow *weakWindow = window;
+        
         dispatch_async(dispatch_get_main_queue(), ^{
-            if (!tweakEnabled || !window.contentView) return;
-            if (!shouldModifyWindow(window)) return;
-            NSNumber *key = @((uintptr_t)window);
+            NSWindow *strongWindow = weakWindow;
+            if (!tweakEnabled || !strongWindow || !strongWindow.contentView) return;
+            if (!shouldModifyWindow(strongWindow)) return;
+            
+            NSNumber *key = @((uintptr_t)strongWindow);
             CFAbsoluteTime now = CFAbsoluteTimeGetCurrent();
             NSNumber *lastMaintenance = windowMaintenanceTimestamps[key];
             if (lastMaintenance && (now - lastMaintenance.doubleValue) < kWindowMaintenanceInterval) {
                 return;
             }
             windowMaintenanceTimestamps[key] = @(now);
-            refreshScrollStacksForWindow(window);
+            refreshScrollStacksForWindow(strongWindow);
         });
     }
     return kCVReturnSuccess;
@@ -687,6 +744,15 @@ static void updateAllWindows(void) {
 ZKSwizzleInterface(_AeroFinder_NSWindow, NSWindow, NSObject)
 @implementation _AeroFinder_NSWindow
 
+- (void)close {
+    // Clean up before closing to prevent crashes
+    NSWindow *window = (NSWindow *)self;
+    if (shouldModifyWindow(window)) {
+        removeGlassEffect(window);
+    }
+    ZKOrig(void);
+}
+
 - (id)initWithContentRect:(NSRect)rect styleMask:(NSWindowStyleMask)style backing:(NSBackingStoreType)backing defer:(BOOL)flag {
     id result = ZKOrig(id, rect, style, backing, flag);
     if (result && tweakEnabled) {
@@ -897,7 +963,9 @@ ZKSwizzleInterface(_AeroFinder_NSScrollView, NSScrollView, NSObject)
 @implementation _AeroFinder_NSScrollView
 
 - (void)reflectScrolledClipView:(NSClipView *)clipView {
-    // CRITICAL: During scroll, force transparency to prevent background flicker
+    ZKOrig(void, clipView);
+    
+    // CRITICAL: After scroll, aggressively force transparency to prevent background flicker
     NSScrollView *scrollView = (NSScrollView *)self;
     if (tweakEnabled && scrollView.window && shouldModifyWindow(scrollView.window)) {
         [CATransaction begin];
@@ -906,8 +974,6 @@ ZKSwizzleInterface(_AeroFinder_NSScrollView, NSScrollView, NSObject)
         ensureTransparentScrollStack(scrollView);
         [CATransaction commit];
     }
-    
-    ZKOrig(void, clipView);
 }
 
 - (void)tile {
