@@ -10,15 +10,16 @@
 
 ## Install
 
-Install ammonia from: https://github.com/CoreBedtime/ammonia
-
+- Install ammonia from : https://github.com/CoreBedtime/ammonia
 ```bash
 git clone https://github.com/rennnss/AeroFinder.git
+
 cd AeroFinder
-make test
+
+make && sudo make install
 ```
 
-For uninstallation and other information, run `make help`.
+- Restart Finder after installing.
 
 ## License
 
