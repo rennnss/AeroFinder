@@ -25,14 +25,17 @@
 static BOOL tweakEnabled = YES;
 static BOOL glassAvailable = NO;
 static NSMutableDictionary *glassViews = nil;
-static NSMutableDictionary *windowTimers = nil;
+// static NSMutableDictionary *windowTimers = nil; // Removed in favor of
+// CVDisplayLink
 static NSMutableDictionary<NSNumber *, NSNumber *>
     *windowMaintenanceTimestamps = nil;
 static NSMutableDictionary<NSNumber *, NSValue *> *windowDisplayLinks = nil;
 static NSMutableDictionary<NSNumber *, NSNumber *> *windowScrollTimestamps =
     nil;
 static NSColor *clearColorCache = nil;
-static const NSTimeInterval kWindowMaintenanceInterval = 0.018;
+static const NSTimeInterval kWindowMaintenanceInterval =
+    0.018; // ~60FPS target for active
+static const NSTimeInterval kWindowIdleInterval = 1.0; // 1Hz for idle
 static const NSTimeInterval kScrollActivityWindow = 0.5;
 
 #pragma mark - Macros
@@ -526,12 +529,61 @@ displayLinkCallback(CVDisplayLinkRef link, const CVTimeStamp *inNow,
       NSNumber *key = @((uintptr_t)strongWindow);
       CFAbsoluteTime now = CFAbsoluteTimeGetCurrent();
       NSNumber *lastMaintenance = windowMaintenanceTimestamps[key];
-      if (lastMaintenance &&
-          (now - lastMaintenance.doubleValue) < kWindowMaintenanceInterval)
+
+      // Adaptive Polling Logic
+      // FIX: Only run high-frequency maintenance during Live Resize.
+      // Scrolling is handled by specific swizzles (NSClipView/NSScrollView),
+      // so we don't need to burn CPU scanning the whole window 60 times a
+      // second.
+      BOOL isActive = strongWindow.inLiveResize;
+      NSTimeInterval interval =
+          isActive ? kWindowMaintenanceInterval : kWindowIdleInterval;
+
+      if (lastMaintenance && (now - lastMaintenance.doubleValue) < interval)
         return;
 
       windowMaintenanceTimestamps[key] = @(now);
-      refreshScrollStacksForWindow(strongWindow);
+
+      // Consolidated Logic from Timer
+      BEGIN_NO_ANIMATION
+      setWindowTransparent(strongWindow);
+      processTitlebarArea(strongWindow);
+
+      if (isActive) {
+        refreshScrollStacksForWindow(strongWindow);
+      } else {
+        // Occasional deep clean even if idle, but less frequent?
+        // For now, just do what the timer did:
+        if (isWindowScrolling(strongWindow)) {
+          refreshScrollStacksForWindow(strongWindow);
+        }
+      }
+
+      NSView *glassView = glassViews[key];
+      if (glassView && glassView.superview) {
+        NSView *bottomView = strongWindow.contentView.subviews.firstObject;
+        if (bottomView != glassView &&
+            strongWindow.contentView.subviews.count > 1) {
+          [glassView removeFromSuperview];
+          [strongWindow.contentView
+              addSubview:glassView
+              positioned:NSWindowBelow
+              relativeTo:strongWindow.contentView.subviews.firstObject];
+          if (glassView.layer)
+            glassView.layer.zPosition = -1000.0;
+        }
+
+        NSRect extendedFrame =
+            NSInsetRect(strongWindow.contentView.bounds, -3, -3);
+        if (!NSEqualRects(glassView.frame, extendedFrame)) {
+          glassView.frame = extendedFrame;
+          if (glassView.layer) {
+            glassView.layer.cornerRadius = 12.0;
+            glassView.layer.masksToBounds = YES;
+          }
+        }
+      }
+      END_NO_ANIMATION
     });
   }
   return kCVReturnSuccess;
@@ -563,96 +615,23 @@ static void processTitlebarArea(NSWindow *window) {
   }
 }
 
-static void startBackgroundHidingTimer(NSWindow *window) {
+static void startWindowMaintenance(NSWindow *window) {
   if (!window)
     return;
 
-  if (!windowTimers)
-    windowTimers = [NSMutableDictionary dictionary];
+  // if (!windowTimers) windowTimers = [NSMutableDictionary dictionary]; //
+  // Removed
   if (!windowMaintenanceTimestamps)
     windowMaintenanceTimestamps = [NSMutableDictionary dictionary];
   if (!windowDisplayLinks)
     windowDisplayLinks = [NSMutableDictionary dictionary];
 
   NSNumber *key = @((uintptr_t)window);
-  __weak NSWindow *weakWindow = window;
 
-  NSTimer *existingTimer = windowTimers[key];
-  if (existingTimer && existingTimer.valid) {
-    [existingTimer invalidate];
-  }
-
-  NSTimer *timer = [NSTimer
-      scheduledTimerWithTimeInterval:0.033
-                             repeats:YES
-                               block:^(NSTimer *timer) {
-                                 NSWindow *strongWindow = weakWindow;
-                                 if (!strongWindow ||
-                                     !strongWindow.contentView ||
-                                     !shouldModifyWindow(strongWindow)) {
-                                   [timer invalidate];
-                                   stopDisplayLinkForKey(key);
-                                   [windowTimers removeObjectForKey:key];
-                                   [windowMaintenanceTimestamps
-                                       removeObjectForKey:key];
-                                   return;
-                                 }
-
-                                 CFAbsoluteTime now =
-                                     CFAbsoluteTimeGetCurrent();
-                                 NSNumber *maintenanceKey =
-                                     @((uintptr_t)strongWindow);
-                                 NSNumber *lastMaintenance =
-                                     windowMaintenanceTimestamps
-                                         [maintenanceKey];
-                                 if (lastMaintenance &&
-                                     (now - lastMaintenance.doubleValue) <
-                                         kWindowMaintenanceInterval)
-                                   return;
-                                 windowMaintenanceTimestamps[maintenanceKey] =
-                                     @(now);
-
-                                 BEGIN_NO_ANIMATION
-                                 setWindowTransparent(strongWindow);
-                                 processTitlebarArea(strongWindow);
-
-                                 if (isWindowScrolling(strongWindow)) {
-                                   refreshScrollStacksForWindow(strongWindow);
-                                 }
-
-                                 NSView *glassView = glassViews[key];
-                                 if (glassView && glassView.superview) {
-                                   NSView *bottomView =
-                                       strongWindow.contentView.subviews
-                                           .firstObject;
-                                   if (bottomView != glassView &&
-                                       strongWindow.contentView.subviews.count >
-                                           1) {
-                                     [glassView removeFromSuperview];
-                                     [strongWindow.contentView
-                                         addSubview:glassView
-                                         positioned:NSWindowBelow
-                                         relativeTo:strongWindow.contentView
-                                                        .subviews.firstObject];
-                                     if (glassView.layer)
-                                       glassView.layer.zPosition = -1000.0;
-                                   }
-
-                                   NSRect extendedFrame = NSInsetRect(
-                                       strongWindow.contentView.bounds, -3, -3);
-                                   if (!NSEqualRects(glassView.frame,
-                                                     extendedFrame)) {
-                                     glassView.frame = extendedFrame;
-                                     if (glassView.layer) {
-                                       glassView.layer.cornerRadius = 12.0;
-                                       glassView.layer.masksToBounds = YES;
-                                     }
-                                   }
-                                 }
-                                 END_NO_ANIMATION
-                               }];
-
-  windowTimers[key] = timer;
+  // Ensure no legacy timer exists (just in case)
+  // NSTimer *existingTimer = windowTimers[key];
+  // if (existingTimer && existingTimer.valid) { [existingTimer invalidate]; }
+  // [windowTimers removeObjectForKey:key];
 
   NSValue *existingLinkValue = windowDisplayLinks[key];
   if (!existingLinkValue) {
@@ -736,16 +715,16 @@ static void applyGlassEffect(NSWindow *window) {
     END_NO_ANIMATION
   }
 
-  startBackgroundHidingTimer(window);
+  startWindowMaintenance(window);
 }
 
 static void removeGlassEffect(NSWindow *window) {
   NSNumber *key = @((uintptr_t)window);
-  NSTimer *timer = windowTimers[key];
-  if (timer && timer.valid) {
-    [timer invalidate];
-    [windowTimers removeObjectForKey:key];
-  }
+  // NSTimer *timer = windowTimers[key];
+  // if (timer && timer.valid) {
+  //   [timer invalidate];
+  //   [windowTimers removeObjectForKey:key];
+  // }
 
   stopDisplayLinkForWindow(window);
   [windowMaintenanceTimestamps removeObjectForKey:key];
@@ -1093,7 +1072,7 @@ __attribute__((constructor)) static void initAeroFinder(void) {
 
     // 3. INITIALIZATION
     glassViews = [NSMutableDictionary dictionary];
-    windowTimers = [NSMutableDictionary dictionary];
+    // windowTimers = [NSMutableDictionary dictionary]; // Removed
     windowMaintenanceTimestamps = [NSMutableDictionary dictionary];
     windowDisplayLinks = [NSMutableDictionary dictionary];
     windowScrollTimestamps = [NSMutableDictionary dictionary];
